@@ -7,7 +7,7 @@ cfg = {"user": E["OCI_USER"], "tenancy": E["OCI_TENANCY"], "fingerprint": E["OCI
        "region": E["OCI_REGION"], "key_content": E["OCI_KEY"]}
 oci.config.validate_config(cfg)
 COMP, AD, SUBNET, IMAGE, SSH = E["OCI_COMPARTMENT"], E["OCI_AD"], E["OCI_SUBNET"], E["OCI_IMAGE"], E["SSH_PUBKEY"]
-BUDGET = float(E.get("RUN_SECONDS", "40"))   # keep each job under ~1 billed minute
+BUDGET = float(E.get("RUN_SECONDS", "10"))   # keep each job under ~1 billed minute
 GAP = float(E.get("GAP_SECONDS", "25"))
 SHAPE = "VM.Standard.A1.Flex"
 co = oci.core.ComputeClient(cfg, retry_strategy=oci.retry.NoneRetryStrategy(), timeout=(15, 60))
