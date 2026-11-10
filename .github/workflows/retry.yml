@@ -1,0 +1,42 @@
+name: oracle-a1-retry
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+  actions: write
+concurrency:
+  group: oracle-a1-retry
+  cancel-in-progress: false
+jobs:
+  launch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -q -r requirements.txt
+      - id: launch
+        env:
+          OCI_USER: ${{ secrets.OCI_USER }}
+          OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_KEY: ${{ secrets.OCI_KEY }}
+          OCI_COMPARTMENT: ${{ secrets.OCI_COMPARTMENT }}
+          OCI_AD: ${{ secrets.OCI_AD }}
+          OCI_SUBNET: ${{ secrets.OCI_SUBNET }}
+          OCI_IMAGE: ${{ secrets.OCI_IMAGE }}
+          SSH_PUBKEY: ${{ secrets.SSH_PUBKEY }}
+        run: python launch.py
+      - if: steps.launch.outputs.created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create -R "$GITHUB_REPOSITORY" --title "A1 VM created" --body "VM created, check box (details intentionally not posted here)."
+          gh workflow disable oracle-a1-retry -R "$GITHUB_REPOSITORY"
