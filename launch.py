@@ -7,8 +7,8 @@ cfg = {"user": E["OCI_USER"], "tenancy": E["OCI_TENANCY"], "fingerprint": E["OCI
        "region": E["OCI_REGION"], "key_content": E["OCI_KEY"]}
 oci.config.validate_config(cfg)
 COMP, AD, SUBNET, IMAGE, SSH = E["OCI_COMPARTMENT"], E["OCI_AD"], E["OCI_SUBNET"], E["OCI_IMAGE"], E["SSH_PUBKEY"]
-BUDGET = float(E.get("RUN_SECONDS", "10"))   # keep each job under ~1 billed minute
-GAP = float(E.get("GAP_SECONDS", "25"))
+BUDGET = float(E.get("RUN_SECONDS", "19800"))  # 5h30m, under the 6h job limit
+GAP = float(E.get("GAP_SECONDS", "180"))       # ~3 minutes between attempts
 SHAPE = "VM.Standard.A1.Flex"
 co = oci.core.ComputeClient(cfg, retry_strategy=oci.retry.NoneRetryStrategy(), timeout=(15, 60))
 m = oci.core.models
@@ -36,6 +36,8 @@ while True:
     if found:
         if len(found) > 1: log("WARNING: more than one A1 instance exists - manual review needed")
         done(found[0])
+    if attempt > 0 and (time.time() - start) >= BUDGET:
+        break
     attempt += 1
     details = m.LaunchInstanceDetails(
         compartment_id=COMP, availability_domain=AD, display_name="free-a1", shape=SHAPE,
@@ -44,6 +46,7 @@ while True:
         create_vnic_details=m.CreateVnicDetails(subnet_id=SUBNET, assign_public_ip=True, hostname_label="free-a1"),
         metadata={"ssh_authorized_keys": SSH.strip()},
         instance_options=m.InstanceOptions(are_legacy_imds_endpoints_disabled=True))
+    backoff = GAP
     try:
         log(f"Attempt {attempt}: launching A1 2 OCPU / 12 GB")
         inst = co.launch_instance(details).data
@@ -51,14 +54,23 @@ while True:
         done(inst)
     except oci.exceptions.ServiceError as e:
         log(f"Launch error: status={e.status} code={e.code} message={e.message}")
-        if e.status == 429: log("Rate limited - stop this run, next scheduled run retries"); break
-        if e.status in (500, 503) and "capacity" in (e.message or "").lower(): pass
+        if e.status == 429:
+            backoff = random.uniform(300, 600)  # 5–10 min, then continue this run
+            log(f"Rate limited - backing off {int(backoff)}s before next attempt")
+        elif e.status in (500, 503) and "capacity" in (e.message or "").lower():
+            pass
         elif e.status >= 500:
             # uncertain outcome: re-check inventory before anything else
             time.sleep(10)
             if active_a1(): continue
         else:
             log("Non-capacity error - failing so it is visible"); sys.exit(1)
-    if time.time() - start + GAP > BUDGET: break
-    time.sleep(GAP + random.uniform(0, 5))
+    remaining = BUDGET - (time.time() - start)
+    if remaining <= 0:
+        break
+    if backoff == GAP and remaining < GAP:
+        break
+    sleep_for = min(backoff, remaining)
+    log(f"Sleeping {int(sleep_for)}s before next attempt")
+    time.sleep(sleep_for)
 log("No capacity this run")

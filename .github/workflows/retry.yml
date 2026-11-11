@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      run_seconds:
+        description: "Loop window in seconds (default 19800 = 5h30m)"
+        required: false
+        default: "19800"
 permissions:
   contents: read
   issues: write
@@ -13,7 +18,7 @@ concurrency:
 jobs:
   launch:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -33,10 +38,28 @@ jobs:
           OCI_SUBNET: ${{ secrets.OCI_SUBNET }}
           OCI_IMAGE: ${{ secrets.OCI_IMAGE }}
           SSH_PUBKEY: ${{ secrets.SSH_PUBKEY }}
+          RUN_SECONDS: ${{ inputs.run_seconds || '19800' }}
+          GAP_SECONDS: "180"
         run: python launch.py
       - if: steps.launch.outputs.created == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh issue create -R "$GITHUB_REPOSITORY" --title "A1 VM created" --body "VM created, check box (details intentionally not posted here)."
+          gh issue create -R "$GITHUB_REPOSITORY" --title "A1 VM created" --body "VM created, check box"
           gh workflow disable oracle-a1-retry -R "$GITHUB_REPOSITORY"
+      - if: steps.launch.outputs.created != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          existing="$(gh issue list -R "$GITHUB_REPOSITORY" --search 'in:title "A1 VM created"' --state all --limit 1 --json number --jq '.[].number')"
+          if [ -n "$existing" ]; then
+            echo "A1 VM created issue exists - not redispatched"
+            exit 0
+          fi
+          state="$(gh workflow list -R "$GITHUB_REPOSITORY" --all --json name,state --jq '.[] | select(.name=="oracle-a1-retry") | .state')"
+          if [ "$state" != "active" ]; then
+            echo "Workflow state=$state - not redispatched"
+            exit 0
+          fi
+          gh workflow run oracle-a1-retry -R "$GITHUB_REPOSITORY"
+          echo "Redispatched next run"
